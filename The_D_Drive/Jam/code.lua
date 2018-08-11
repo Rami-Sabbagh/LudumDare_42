@@ -8,6 +8,7 @@ local class = Library("class")
 local sw,sh = screenSize()
 local mw,mh = TileMap:size()
 local diagonalFactor = math.sin(math.pi/4)
+local band, rshift = bit.band, bit.rshift
 
 --Map Layers
 local initMap = TileMap:cut() --Clone the map.
@@ -76,8 +77,8 @@ function Player:draw()
   cam("translate",self.x+self.w/2,self.y+self.h/2)
   cam("rotate",self.rot)
   
-  SpriteGroup(math.floor(13+self.beltPos), -8, -8, 1,2) --Belt left
-  SpriteGroup(math.floor(13+self.beltPos), -8+16, -8, 1,2, -1) --Belt right
+  SpriteGroup(13+self.beltPos, -8, -8, 1,2) --Belt left
+  SpriteGroup(13+self.beltPos, -8+16, -8, 1,2, -1) --Belt right
   SpriteGroup(11, -8,-8,2,2) --Player Base
   SpriteGroup(9, -8,-8,2,2) --Player Body
   
@@ -171,15 +172,53 @@ end
 
 local drawLayer = 1
 local function layerDrawFilter(item)
-  if item.drawLayer and item.drawLayer == drawLayer then
-    return true
-  else
-    return false
-  end
+  return (item.drawLayer and item.drawLayer == drawLayer)
 end
 
 local function updateFilter(item)
-  return not not item.update
+  return item.update
+end
+
+--The VRAM effects
+local badAddresses = {}
+local randomizeTime = 1
+local randomizeTimer = randomizeTime
+
+local function newBadAddress()
+  while true do
+    local addr = math.random(0x0000, 0x2FFF)
+    if not badAddresses[addr] then
+      badAddresses[addr] = math.random(0,255)
+      break
+    end
+  end
+end
+
+local function pokeBadAddress()
+  local SCRLine = sw/2
+  for addr, value in pairs(badAddresses) do
+    --poke(addr,value)
+    --Calculate the position of the left pixel
+    local x = (addr % SCRLine) * 2
+    local y = math.floor(addr / SCRLine)
+    
+    --Separate the 2 pixels from each other
+    local lpix = band(value,0xF0)
+    local rpix = band(value,0x0F)
+    
+    --Shift the left pixel
+    lpix = rshift(lpix,4)
+    
+    --Set the pixels
+    point(x,y,lpix)
+    point(x+1,y,rpix)
+  end
+end
+
+local function randomizeBadValues()
+  for addr, value in pairs(badAddresses) do
+    badAddresses[addr] = math.random(0,255)
+  end
 end
 
 --Events
@@ -189,6 +228,10 @@ function _init()
   colorPalette(15,35,35,35)
   _processBgMap()
   _processObjects()
+  
+  for i=1, 10 do
+    newBadAddress()
+  end
 end
 
 function _update(dt)
@@ -198,6 +241,21 @@ function _update(dt)
     for i=1, len do
       items[i]:update(1)
     end
+  end
+  
+  --Randomize bad pixels
+  randomizeTimer = randomizeTimer - dt
+  if randomizeTimer <= 0 then
+    randomizeTimer = randomizeTime
+    randomizeBadValues()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
+    newBadAddress()
   end
 end
 
@@ -220,4 +278,7 @@ function _draw()
   if os.time()%2 == 0 then
     rect(0,0,1,1,false,8)
   end
+  
+  --VRAM effects
+  pokeBadAddress()
 end

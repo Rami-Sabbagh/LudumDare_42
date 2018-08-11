@@ -1,2 +1,6 @@
 Ludum Dare 42: Running out of space:
 ((memory space))
+
+You're a robot, in a faulty factory, this robot has a very limited memory, once it has been turned on, it started thinking, and thinking produces data, so consumes the memory.
+The robot's goal is to solve problems in the factory, and each time the robot solves a problem, it will be awarded with a memory expansion.
+Once the factory is all working again, it will produce 1TB memory expansions, the robot will get 1 as a reward, and operate for years without running out of memory.
