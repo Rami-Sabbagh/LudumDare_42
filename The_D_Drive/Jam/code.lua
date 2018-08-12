@@ -128,17 +128,40 @@ function LaserEmitter:initialize(x,y,tid)
 end
 
 function LaserEmitter:update(dt)
-  local itemInfo, len = world:querySegmentWithCoords(self.x+4,self.y+4,self.laserDx,self.laserDy)
-  --Ignore first 2 items, because they are the wall+laser.
-  if len > 2 then
-    local info = itemInfo[3]
-    self.laserX, self.laserY = info.x1, info.y1
+  local x1,y1, x2,y2 = self.x+4, self.y+4, self.laserDx, self.laserDy
+  self.laserLine = {x1,y1}
+  local item = self
+  
+  while true do
+    local infos, len = world:querySegmentWithCoords(x1,y1, x2,y2)
+    local index = 1; if item == self then index = 3 elseif infos[1] and infos[1].item == item then index = 2 end
+    local info = infos[index]
+    if info then
+      local oldx2, oldy2 = x2, y2
+      item, x1,y1, x2,y2 = info.item, info.x1, info.y1, info.x2, info.y2
+      
+      if item.mirror then
+        local state,ix,iy, dx,dy = item:mirrorLaser(x1,y1, x2,y2)
+        if state == 3 then --reflect
+          x1,y1, x2,y2 = ix,iy, dx,dy
+        elseif state == 2 then --block
+          info = false
+        elseif state == 1 then --passthrow
+          x1,y1, x2,y2 = x2,y2, oldx2, oldy2
+        end
+      end
+    end
+    
+    self.laserLine[#self.laserLine+1] = x1
+    self.laserLine[#self.laserLine+1] = y1
+    
+    if not info or not item.mirror then break end
   end
 end
 
 function LaserEmitter:draw()
-  if self.laserX then
-    line(self.x+4,self.y+4,self.laserX,self.laserY,8)
+  if self.laserLine then
+    color(8) lines(unpack(self.laserLine))
   end
   
   Sprite(self.sid,self.x+self.ox,self.y+self.oy)
@@ -170,6 +193,93 @@ end
 
 function LaserReceiver:draw()
   Sprite(self.sid,self.x+self.ox,self.y+self.oy)
+end
+
+--Laser Mirror
+local LaserMirror = class("static.LaserMirror")
+
+do
+  --Check if this point is over the reflection line or not.
+  local function ovrl(self,x,y)
+    local bx, by, fx, fy, w,h = self.x, self.y, self.fx, self.fy, self.w, self.h
+    local r1, r2 = false, false
+    if fx then r1 = (x >= bx+w-1) else r1 = (x <= bx) end
+    if fy then r2 = (y >= by+h-1) else r2 = (y <= by) end
+    return r1 or r2
+  end
+  
+  local function getIntersection(x1,y1,x2,y2, x3,y3,x4,y4)
+    local a,b,c = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4), (x1*y2-y1*x2), (x3*y4-y3*x4)
+    return (b*(x3-x4)-(x1-x2)*c)/a,(b*(y3-y4)-(y1-y2)*c)/a
+  end
+
+  function LaserMirror:initialize(x,y,tid)
+    self.type = "wall"
+    self.mirror = true
+    self.tid = tid
+    
+    --Add to the bg batch
+    bgBatch:add(SpriteMap:quad(self.tid),x,y)
+    
+    if self.tid <= 109 then --45 digree
+      self.vid = self.tid - 106
+      self.x, self.y, self.w, self.h = x,y, 8,8
+      self.angle = math.pi/4
+    elseif self.tid <= 113 then --22.5 diggree
+      self.vid = self.tid - 110
+      self.angle = math.pi/8
+      
+      if self.vid == 0 or self.vid == 1 then
+        self.x, self.y, self.w, self.h = x,y+4, 8,4
+      elseif self.vid == 2 or self.vid == 3 then
+        self.x, self.y, self.w, self.h = x,y, 8,4
+      end
+    else -- 67.5 digree
+      self.vid = self.tid - 114
+      self.angle = math.pi/2 - math.pi/8
+      
+      if self.vid == 0 or self.vid == 3 then
+        self.x, self.y, self.w, self.h = x+4,y, 4,8
+      elseif self.vid == 1 or self.vid == 2 then
+        self.x, self.y, self.w, self.h = x,y, 4,8
+      end
+    end
+    
+    if self.vid == 0 then
+      self.fx, self.fy = false,false
+    elseif self.vid == 1 then
+      self.fx, self.fy = true,false
+      self.angle = math.pi - self.angle
+    elseif self.vid == 2 then
+      self.fx, self.fy = true,true
+      --self.angle = math.pi*2-self.angle
+    elseif self.vid == 3 then
+      self.fx, self.fy = false,true
+      self.angle = -self.angle--self.angle - math.pi
+    end
+    
+    --Add to the bump world
+    world:add(self,self.x,self.y,self.w,self.h)
+  end
+  
+  function LaserMirror:mirrorLaser(x1,y1,x2,y2)
+    if ovrl(self,x1,y1) and ovrl(self,x2,y2) then
+      return 1 --Pass throw
+    elseif not (ovrl(self,x1,y1) or ovrl(self,x2,y2)) then
+      return 2 --Block
+    else
+      local ix, iy = getIntersection(self.x,self.y+self.h,self.x+self.w,self.y, x1,y1,x2,y2)
+      
+      local angle = self.angle*2 - math.atan2(y1-iy,ix-x1)
+      
+      local length = 230
+      
+      local dx = math.cos(angle)*length + ix
+      local dy = -math.sin(angle)*length + iy
+      
+      return 3, ix,iy,dx,dy
+    end
+  end
 end
 
 --Functions
@@ -245,6 +355,8 @@ local function _processObjects()
   prcMap:map(function(x,y,tid)
     if tid == 97 then --Player
       Player(x*8,y*8)
+    elseif tid >= 106 and tid <= 117 then --Laser mirror
+      LaserMirror(x*8,y*8,tid)
     end
   end)
 end
