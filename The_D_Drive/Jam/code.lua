@@ -11,7 +11,7 @@ local diagonalFactor = math.sin(math.pi/4)
 local band, rshift = bit.band, bit.rshift
 
 --Map Layers
-local initMap = TileMap:cut() --Clone the map.
+local prcMap = TileMap:cut() --Clone the map.
 local bgMap = MapObj(mw+1,mh+1,SpriteMap) --Contains walls and background grid.
 
 --Spritebatches
@@ -21,8 +21,7 @@ local bgBatch = SpriteMap.img:batch((mw+1)*(mh+1),"static")
 local cellSize = 4
 local world = bump.newWorld(cellSize)
 
---Classes
-local instances = {}
+--Classes--
 
 --Wall
 local Wall = class("static.Wall")
@@ -35,9 +34,6 @@ function Wall:initialize(x,y)
   
   --Add to the bump world
   world:add(self,self.x,self.y,self.w,self.h)
-  
-  --Insert into the instances table
-  instances[#instances+1] = self
 end
 
 --Player
@@ -55,13 +51,10 @@ function Player:initialize(x,y)
   self.beltPos = 0
   self.beltFrames = 4
   
-  self.speed = 1
+  self.speed = 1.5
   
   --Add to the bump world
   world:add(self,self.x,self.y,self.w,self.h)
-  
-  --Insert into the instances table
-  instances[#instances+1] = self
 end
 
 function Player:move(x,y)
@@ -74,7 +67,7 @@ function Player:draw()
   palt(14,true)
   pushMatrix()
   
-  cam("translate",self.x+self.w/2,self.y+self.h/2)
+  cam("translate",math.floor(self.x+self.w/2),math.floor(self.y+self.h/2))
   cam("rotate",self.rot)
   
   SpriteGroup(13+self.beltPos, -8, -8, 1,2) --Belt left
@@ -105,18 +98,104 @@ function Player:update(dt)
   self:checkControls(dt)
 end
 
+--Laser emitter
+local LaserEmitter = class("static.LaserEmitter")
+
+function LaserEmitter:initialize(x,y,tid)
+  self.x, self.y = x or 0, y or 0
+  self.w, self.h = 9, 9
+  
+  self.type = "wall"
+  self.drawLayer = 2
+  
+  self.length = 8*32
+  
+  self.laser = math.pi*0.5*(tid-98)
+  self.emitter = true
+  self.enabled = true
+  
+  self.laserDx = self.x+4+math.cos(self.laser)*self.length
+  self.laserDy = self.y+4+math.sin(self.laser)*-self.length
+  
+  self.sid = 57+tid-98
+  self.ox, self.oy = 0,0
+  if self.sid < 58 or self.sid > 59 then
+    self.ox, self.oy = 1,1
+  end
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function LaserEmitter:update(dt)
+  local itemInfo, len = world:querySegmentWithCoords(self.x+4,self.y+4,self.laserDx,self.laserDy)
+  --Ignore first 2 items, because they are the wall+laser.
+  if len > 2 then
+    local info = itemInfo[3]
+    self.laserX, self.laserY = info.x1, info.y1
+  end
+end
+
+function LaserEmitter:draw()
+  if self.laserX then
+    line(self.x+4,self.y+4,self.laserX,self.laserY,8)
+  end
+  
+  Sprite(self.sid,self.x+self.ox,self.y+self.oy)
+end
+
+--Laser reciever
+local LaserReceiver = class("static.LaserReceiver")
+
+function LaserReceiver:initialize(x,y,tid)
+  self.x, self.y = x or 0, y or 0
+  self.w, self.h = 9, 9
+  
+  self.type = "wall"
+  self.drawLayer = 2
+  
+  self.laser = math.pi*0.5*(tid-102)
+  self.receiver = true
+  self.enabled = true
+  
+  self.sid = 81+tid-102
+  self.ox, self.oy = 0,0
+  if self.sid < 82 or self.sid > 83 then
+    self.ox, self.oy = 1,1
+  end
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function LaserReceiver:draw()
+  Sprite(self.sid,self.x+self.ox,self.y+self.oy)
+end
+
 --Functions
+local function _processLasers()
+  prcMap:map(function(x,y,tid)
+    if tid >= 98 and tid <= 101 then
+      LaserEmitter(x*8,y*8,tid)
+      return 2 --Convert into wall
+    elseif tid >= 102 and tid <= 105 then
+      LaserReceiver(x*8,y*8,tid)
+      return 2 --Convert into wall
+    end
+  end)
+end
+
 local function _processBgMap()
   bgBatch:clear()
   
   local function is(x,y)
-    local tid = initMap:cell(x,y)
+    local tid = prcMap:cell(x,y)
     if tid and tid == 2 then return true end
     return false
   end
 
   local function isnt(x,y)
-    local tid = initMap:cell(x,y)
+    local tid = prcMap:cell(x,y)
     if tid and tid == 2 then return false end
     return true
   end
@@ -127,7 +206,7 @@ local function _processBgMap()
     if obj then Wall(x*8,y*8) end
   end
 
-  initMap:map(function(x,y,tid)
+  prcMap:map(function(x,y,tid)
       if tid == 2 then --Wall tile
         if isnt(x-1,y) and isnt(x,y-1) and is(x-1,y-1) then
           setCell(x,y,51,true)
@@ -163,7 +242,7 @@ local function _processBgMap()
 end
 
 local function _processObjects()
-  initMap:map(function(x,y,tid)
+  prcMap:map(function(x,y,tid)
     if tid == 97 then --Player
       Player(x*8,y*8)
     end
@@ -180,45 +259,40 @@ local function updateFilter(item)
 end
 
 --The VRAM effects
-local badAddresses = {}
+local badPixelsImageData = imagedata(sw,sh)
+badPixelsImageData:map(function() return 15 end)
+local badPixelsImage = badPixelsImageData:image()
+local totalBadPixels = 0
+--local badAddresses = {}
 local randomizeTime = 1
 local randomizeTimer = randomizeTime
 
 local function newBadAddress()
-  while true do
-    local addr = math.random(0x0000, 0x2FFF)
-    if not badAddresses[addr] then
-      badAddresses[addr] = math.random(0,255)
-      break
-    end
+  local x,y,value = math.random(0,sw/2)*2, math.random(0,sh-1), math.random(0,255)
+  
+  --Separate the 2 pixels from each other
+  local lpix = band(value,0xF0)
+  local rpix = band(value,0x0F)
+  
+  --Shift the left pixel
+  lpix = rshift(lpix,4)
+  
+  if badPixelsImageData:getPixel(x,y) == 15 then
+    totalBadPixels = totalBadPixels + 2
   end
+  
+  --Set the pixels
+  badPixelsImageData:setPixel(x,y,math.min(lpix,14))
+  badPixelsImageData:setPixel(x+1,y,math.min(rpix,14))
+  
+  --Update the image
+  badPixelsImage:refresh()
 end
 
 local function pokeBadAddress()
-  local SCRLine = sw/2
-  for addr, value in pairs(badAddresses) do
-    --poke(addr,value)
-    --Calculate the position of the left pixel
-    local x = (addr % SCRLine) * 2
-    local y = math.floor(addr / SCRLine)
-    
-    --Separate the 2 pixels from each other
-    local lpix = band(value,0xF0)
-    local rpix = band(value,0x0F)
-    
-    --Shift the left pixel
-    lpix = rshift(lpix,4)
-    
-    --Set the pixels
-    point(x,y,lpix)
-    point(x+1,y,rpix)
-  end
-end
-
-local function randomizeBadValues()
-  for addr, value in pairs(badAddresses) do
-    badAddresses[addr] = math.random(0,255)
-  end
+  palt(0,false) palt(15,true)
+  badPixelsImage:draw()
+  palt()
 end
 
 --Events
@@ -226,12 +300,9 @@ function _init()
   clear(0)
   colorPalette(14,10,10,10)
   colorPalette(15,35,35,35)
+  _processLasers()
   _processBgMap()
   _processObjects()
-  
-  for i=1, 10 do
-    newBadAddress()
-  end
 end
 
 function _update(dt)
@@ -244,19 +315,11 @@ function _update(dt)
   end
   
   --Randomize bad pixels
-  randomizeTimer = randomizeTimer - dt
-  if randomizeTimer <= 0 then
+  --[[randomizeTimer = randomizeTimer - dt
+  if randomizeTimer <= 0 or true then
     randomizeTimer = randomizeTime
-    randomizeBadValues()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-    newBadAddress()
-  end
+    for i=1,10 do newBadAddress() end
+  end]]
 end
 
 function _draw()
@@ -266,17 +329,12 @@ function _draw()
   bgBatch:draw()
   
   --Draw objects
-  for layer=1,1 do
+  for layer=2,1,-1 do
     drawLayer = layer
     local items, len = world:queryRect(0,0,sw,sh,layerDrawFilter)
     for i=1,len do
       items[i]:draw()
     end
-  end
-  
-  --Draw clock pixel
-  if os.time()%2 == 0 then
-    rect(0,0,1,1,false,8)
   end
   
   --VRAM effects
