@@ -44,7 +44,7 @@ function Player:initialize(x,y)
   self.w, self.h = 12,12
   
   self.type = "player"
-  self.drawLayer = 1
+  self.drawLayer = 2
   
   self.rot = 0
   
@@ -52,13 +52,24 @@ function Player:initialize(x,y)
   self.beltFrames = 4
   
   self.speed = 1.5
+  self.normalSpeed = 1.5
+  self.slowSpeed = 0.35
+  
+  self.hasMirrorBox = false
   
   --Add to the bump world
   world:add(self,self.x,self.y,self.w,self.h)
 end
 
+function Player:filter(other)
+  if self.hasMirrorBox and other == self.hasMirrorBox then
+    return false
+  end
+  return "slide"
+end
+
 function Player:move(x,y)
-  local actualX, actualY, cols, len = world:move(self,x,y)
+  local actualX, actualY, cols, len = world:move(self,x,y,self.filter)
   self.x, self.y = actualX, actualY
 end
 
@@ -73,7 +84,14 @@ function Player:draw()
   SpriteGroup(13+self.beltPos, -8, -8, 1,2) --Belt left
   SpriteGroup(13+self.beltPos, -8+16, -8, 1,2, -1) --Belt right
   SpriteGroup(11, -8,-8,2,2) --Player Base
-  SpriteGroup(9, -8,-8,2,2) --Player Body
+  if self.hasMirrorBox then
+    SpriteGroup(17, -8,-8,2,2) --Player Body
+    palt(0,true)
+    --SpriteGroup(61, -5,-8,2,2) --The box
+    palt(0,false)
+  else
+    SpriteGroup(9, -8,-8,2,2) --Player Body
+  end
   
   popMatrix()
   palt()
@@ -91,7 +109,68 @@ function Player:checkControls(dt)
     local goalX, goalY = self.x + self.speed*dx*dt, self.y + self.speed*dy*dt
     self:move(goalX,goalY)
     self.beltPos = (self.beltPos + self.speed*dt) % self.beltFrames
+    self:updateMirrorBox()
   end
+  
+  if btnp(5) then
+    local bw, bh = 10, 10
+    local bcx,bcy = self.x+self.w/2+math.sin(self.rot)*(self.w+bw)*0.5, self.y+self.h/2-math.cos(self.rot)*(self.h+bh)*0.5
+    local bx, by = bcx-bw/2, bcy-bh/2
+    
+    local items, len = world:queryRect(bx,by,bw,bh,function(item)
+      if self.hasMirrorBox and item == self.hasMirrorBox then return false end
+      return item ~= self
+    end)
+    
+    if self.hasMirrorBox then
+      if len == 0 then
+        world:update(self.hasMirrorBox,bx,by)
+        self.hasMirrorBox.x, self.hasMirrorBox.y = bx, by
+        self.hasMirrorBox.drawLayer = 3
+        self.hasMirrorBox = nil
+        SFX(1)
+      else
+        SFX(2)
+      end
+    elseif len > 0 then
+      local bcx,bcy = self.x+self.w/2+math.sin(self.rot)*3, self.y+self.h/2-math.cos(self.rot)*3
+      local bx, by = bcx-bw/2, bcy-bh/2
+      for i=1, len do
+        local item = items[i]
+        if item.type == "box" and item.mirror then
+          self.hasMirrorBox = item
+          world:update(self.hasMirrorBox,bx,by)
+          self.hasMirrorBox.x, self.hasMirrorBox.y = bx, by
+          self.hasMirrorBox.drawLayer = 1
+          SFX(0)
+          break
+        end
+      end
+      
+      if not self.hasMirrorBox then
+        SFX(2)
+      end
+    end
+  end
+  
+  if btnp(6) then
+    if self.speed == self.normalSpeed then
+      self.speed = self.slowSpeed
+    else
+      self.speed = self.normalSpeed
+    end
+  end
+end
+
+function Player:updateMirrorBox()
+  if not self.hasMirrorBox then return end
+  
+  local bw, bh = 10, 10
+  local bcx,bcy = self.x+self.w/2+math.sin(self.rot)*3, self.y+self.h/2-math.cos(self.rot)*3
+  local bx, by = bcx-bw/2, bcy-bh/2
+  
+  world:update(self.hasMirrorBox,bx,by)
+  self.hasMirrorBox.x, self.hasMirrorBox.y = bx, by
 end
 
 function Player:update(dt)
@@ -106,7 +185,7 @@ function LaserEmitter:initialize(x,y,tid)
   self.w, self.h = 9, 9
   
   self.type = "wall"
-  self.drawLayer = 2
+  self.drawLayer = 3
   
   self.length = 8*32
   
@@ -175,7 +254,7 @@ function LaserReceiver:initialize(x,y,tid)
   self.w, self.h = 9, 9
   
   self.type = "wall"
-  self.drawLayer = 2
+  self.drawLayer = 3
   
   self.laser = math.pi*0.5*(tid-102)
   self.receiver = true
@@ -282,6 +361,49 @@ do
   end
 end
 
+--MirrorBox
+local MirrorBox = class("pickable.MirrorBox")
+
+function MirrorBox:initialize(x,y)
+  self.x, self.y = x or 0, y or 0
+  self.w, self.h = 10,10
+  
+  self.type = "box"
+  self.mirror = true
+  
+  self.drawLayer = 3
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function MirrorBox:draw()
+  --Sprite(118, self.x, self.y)
+  SpriteGroup(61,self.x,self.y,2,2)
+end
+
+function MirrorBox:mirrorLaser(x1,y1,x2,y2)
+  local length = 230
+  
+  local angle = math.atan2(y1-y2,x2-x1)
+  
+  if x1 <= self.x or x1 >= self.x+self.w-1 then --left/right side
+    angle = math.pi - angle
+  else --front/back side
+    angle = -angle
+  end
+  
+  if x1 <= self.x then x1,y1 = self.x-1,y1+1 end
+  if y1 <= self.y then y1 = self.y-1 end
+  if x1 >= self.x+self.w-1 then x1,y1 = self.x+self.w-1,y1-1 end
+  if y1 >= self.y+self.h-1 then y1,x1 = self.y+self.h-1,x1-1 end
+  
+  local dx = math.cos(angle)*length + x1
+  local dy = -math.sin(angle)*length + y1
+  
+  return 3, x1,y1,dx,dy
+end
+
 --Functions
 local function _processLasers()
   prcMap:map(function(x,y,tid)
@@ -357,6 +479,8 @@ local function _processObjects()
       Player(x*8,y*8)
     elseif tid >= 106 and tid <= 117 then --Laser mirror
       LaserMirror(x*8,y*8,tid)
+    elseif tid == 118 then --Mirror box
+      MirrorBox(x*8,y*8)
     end
   end)
 end
@@ -364,10 +488,6 @@ end
 local drawLayer = 1
 local function layerDrawFilter(item)
   return (item.drawLayer and item.drawLayer == drawLayer)
-end
-
-local function updateFilter(item)
-  return item.update
 end
 
 --The VRAM effects
@@ -420,9 +540,11 @@ end
 function _update(dt)
   --Update objects
   do
-    local items, len = world:queryRect(0,0,mw*8,mh*8,updateFilter)
+    local items, len = world:getItems()
     for i=1, len do
-      items[i]:update(1)
+      if items[i].update then
+        items[i]:update(1)
+      end
     end
   end
   
@@ -441,7 +563,7 @@ function _draw()
   bgBatch:draw()
   
   --Draw objects
-  for layer=2,1,-1 do
+  for layer=3,1,-1 do
     drawLayer = layer
     local items, len = world:queryRect(0,0,sw,sh,layerDrawFilter)
     for i=1,len do
