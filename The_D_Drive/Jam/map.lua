@@ -8,7 +8,7 @@ return {
   height = 128,
   tilewidth = 8,
   tileheight = 8,
-  nextobjectid = 326,
+  nextobjectid = 328,
   properties = {},
   tilesets = {
     {
@@ -1205,40 +1205,6 @@ return {
           properties = {}
         },
         {
-          id = 134,
-          name = "",
-          type = "",
-          shape = "polyline",
-          x = 275.75,
-          y = 282,
-          width = 0,
-          height = 0,
-          rotation = 0,
-          visible = true,
-          polyline = {
-            { x = 0, y = 0 },
-            { x = 6.75, y = 0 }
-          },
-          properties = {}
-        },
-        {
-          id = 135,
-          name = "",
-          type = "",
-          shape = "polyline",
-          x = 270,
-          y = 284.25,
-          width = 0,
-          height = 0,
-          rotation = 0,
-          visible = true,
-          polyline = {
-            { x = 0, y = 0 },
-            { x = 12.75, y = -0.25 }
-          },
-          properties = {}
-        },
-        {
           id = 137,
           name = "",
           type = "",
@@ -1286,6 +1252,40 @@ return {
           polyline = {
             { x = 0, y = 0 },
             { x = 35.25, y = 31.25 }
+          },
+          properties = {}
+        },
+        {
+          id = 326,
+          name = "",
+          type = "",
+          shape = "polyline",
+          x = 292.5,
+          y = 282.5,
+          width = 0,
+          height = 0,
+          rotation = 0,
+          visible = true,
+          polyline = {
+            { x = 0, y = 0 },
+            { x = 7.75, y = -0.5 }
+          },
+          properties = {}
+        },
+        {
+          id = 327,
+          name = "",
+          type = "",
+          shape = "polyline",
+          x = 284,
+          y = 285.5,
+          width = 0,
+          height = 0,
+          rotation = 0,
+          visible = true,
+          polyline = {
+            { x = 0, y = 0 },
+            { x = 16, y = -0.25 }
           },
           properties = {}
         }
