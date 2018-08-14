@@ -1,4 +1,5 @@
 --Ludum Dare 42
+clearEStack()
 
 local function setPalette()
   colorPalette(14,10,10,10)
@@ -10,6 +11,8 @@ local bump = Library("bump")
 local class = Library("class")
 
 --Contants
+local showDialog
+local resetRAM
 local sw,sh = screenSize()
 local mw,mh = TileMap:size()
 local diagonalFactor = math.sin(math.pi/4)
@@ -92,17 +95,24 @@ function Wall:initialize(x,y)
   world:add(self,self.x,self.y,self.w,self.h)
 end
 
+local CHECKPOINT_X, CHECKPOINT_Y = 0,0
+
 --Player
 local Player = class("dynamic.Player")
 
+local MainPlayer
+
 function Player:initialize(x,y)
+  CHECKPOINT_X, CHECKPOINT_Y = x,y
+  MainPlayer = self
+  
   self.x, self.y = x or 0, y or 0
   self.w, self.h = 12,12
   
   self.type = "player"
   self.drawLayer = 2
   
-  self.rot = 0
+  self.rot = math.pi
   
   self.beltPos = 0
   self.beltFrames = 4
@@ -123,6 +133,12 @@ function Player:filter(other)
   elseif other.receiver then
     return false
   elseif other.type == "door" and not other.closed then
+    return false
+  elseif other.touchtrigger then
+    if not other.used then TRIGGER(other.x,other.y) end
+    other.used = true
+    return false
+  elseif other.ignore then
     return false
   end
   return "slide"
@@ -179,6 +195,7 @@ function Player:checkControls(dt)
     
     local items, len = world:queryRect(bx,by,bw,bh,function(item)
       if self.hasMirrorBox and item == self.hasMirrorBox then return false end
+      if item.touchtrigger or item.ignore then return false end
       return item ~= self
     end)
     
@@ -295,17 +312,17 @@ function LaserEmitter:castLaser()
         elseif state == 1 then --passthrow
           x1,y1, x2,y2 = x2,y2, oldx2, oldy2
         end
-      elseif item.glass then
+      elseif item.glass or item.ignore or item.touchtrigger then
         --Pass throw
         x1,y1, x2,y2 = x2,y2, oldx2, oldy2
       elseif item.receiver then
-        --[[local pos = {item.x/8, item.y/8}
+        local pos = {item.x/8, item.y/8}
         if not triggerQueue[pos] then
           triggerQueue[triggerQueueLength+1] = pos
           triggerQueueLength = triggerQueueLength +1
         end
-        triggerQueue[pos] = (triggerQueue[pos] or 0) +1]]
-        TRIGGER(item.x, item.y)
+        triggerQueue[pos] = (triggerQueue[pos] or 0) +1
+        --TRIGGER(item.x, item.y)
         
         x1 = math.max(item.x+1,math.min(item.x+item.w-3,x1))
         y1 = math.max(item.y+1,math.min(item.y+item.h-3,y1))
@@ -315,7 +332,7 @@ function LaserEmitter:castLaser()
     self.laserLine[#self.laserLine+1] = x1
     self.laserLine[#self.laserLine+1] = y1
     
-    if not info or (not item.mirror and not item.glass) then break end
+    if not info or (not item.mirror and not item.glass and not item.ignore and not item.touchtrigger) then break end
   end
 end
 
@@ -560,6 +577,8 @@ function Door:initialize(x,y,hz)
   
   self.type = "door"
   self.drawLayer = 1
+  self.crushTime = 0.4
+  self.crushTimer = false
   
   self.closed = true
   
@@ -572,10 +591,31 @@ function Door:trigger()
 end
 
 function Door:update(dt)
+  if self.crushTimer then self.crushTimer = self.crushTimer - dt end
   if self.triggered and self.closed then
     SFX(3,2) --Opened
   elseif (not self.triggered) and (not self.closed) then
     SFX(4,2) --Closed
+    local items,len = world:queryRect(self.x,self.y,self.w,self.h)
+    for i=1, len do
+      local item = items[i]
+      if item.type == "player" then
+        if not self.curshTimer then
+          self.crushTimer = self.crushTime
+        end
+      end
+    end
+  end
+  if self.crushTimer and self.crushTimer <= 0 then
+    local items,len = world:queryRect(self.x,self.y,self.w,self.h)
+    for i=1, len do
+      local item = items[i]
+      if item.type == "player" then
+        showDialog(-2)
+        reboot()
+      end
+    end
+    self.crushTimer = false
   end
   self.closed = not self.triggered
   self.triggered = false
@@ -588,7 +628,7 @@ end
 --Delay
 local Delay = class("wire.Delay")
 
-function Delay:initialize(x,y)
+function Delay:initialize(x,y,instant)
   self.x, self.y = x,y
   self.w, self.h = 8,8
   
@@ -597,6 +637,7 @@ function Delay:initialize(x,y)
   self.time = 1
   self.timer = 0
   self.active = false
+  self.instant = instant
   
   --Add to the bump world
   world:add(self,self.x,self.y,self.w,self.h)
@@ -604,7 +645,7 @@ end
 
 function Delay:trigger()
   self.timer = self.time
-  self.active = false
+  self.active = self.instant
 end
 
 function Delay:update(dt)
@@ -628,7 +669,7 @@ function STrigger:initialize(x,y)
   
   self.type = "special"
   
-  self.timer = 1
+  self.timer = 0.1
   
   --Add to the bump world
   world:add(self,self.x,self.y,self.w,self.h)
@@ -641,6 +682,82 @@ function STrigger:update(dt)
       TRIGGER(self.x,self.y)
       self.timer = -1
     end
+  end
+end
+
+--Touch trigger
+local TTrigger = class("wire.TTrigger")
+
+function TTrigger:initialize(x,y)
+  self.x, self.y = x,y
+  self.w, self.h = 8,8
+  
+  self.type = "special"
+  self.touchtrigger = true
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+--FREP
+local WREP = class("wire.Repeater")
+
+function WREP:initialize(x,y)
+  self.x, self.y = x,y
+  self.w, self.h = 8,8
+  
+  self.type = "special"
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function WREP:trigger()
+  self.triggered = true
+end
+
+function WREP:update(dt)
+  if self.triggered then
+    TRIGGER(self.x,self.y)
+  end
+  
+  self.triggered = false
+end
+
+--FUSE
+local WFUSE = class("wire.Fuse")
+
+function WFUSE:initialize(x,y)
+  self.x, self.y = x,y
+  self.w, self.h = 8,8
+  
+  self.type = "special"
+  self.timer = 0.5
+  
+  self.active = false
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function WFUSE:trigger()
+  if self.timer >= 0 then return end
+  self.triggered = true
+end
+
+function WFUSE:update(dt)
+  if self.timer > 0 then
+    self.timer = self.timer - dt
+    return
+  end
+  
+  if self.active then
+    TRIGGER(self.x, self.y)
+  end
+  
+  if self.triggered then
+    self.active = true
+    self.triggered = false
   end
 end
 
@@ -661,7 +778,6 @@ end
 
 function WAND:trigger(num)
   self.triggered = num
-  cprint("WAND",num,self.total)
 end
 
 function WAND:update(dt)
@@ -696,6 +812,62 @@ function WNOT:update(dt)
   self.triggered = false
 end
 
+--dia
+local WDIA = class("wire.DIA")
+
+function WDIA:initialize(x,y,id)
+  self.x, self.y = x,y
+  self.w, self.h = 8,8
+  
+  self.type = "special"
+  self.id = id
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function WDIA:trigger()
+  self.triggered = true
+end
+
+function WDIA:update(dt)
+  if self.triggered and self.id then
+    showDialog(self.id)
+    self.id = nil
+  end
+  
+  self.triggered = false
+end
+
+--checkpoint
+local WCP = class("wire.CP")
+
+function WCP:initialize(x,y)
+  self.x, self.y = x,y
+  self.w, self.h = 8,8
+  
+  self.type = "special"
+  self.ignore = true
+  self.used = false
+  
+  --Add to the bump world
+  world:add(self,self.x,self.y,self.w,self.h)
+end
+
+function WCP:trigger()
+  self.triggered = true
+end
+
+function WCP:update(dt)
+  if self.triggered and not self.used then
+    CHECKPOINT_X, CHECKPOINT_Y = self.x, self.y
+    resetRAM()
+    self.used = true
+  end
+  
+  self.triggered = false
+end 
+
 --Functions
 local function _processLasers()
   prcMap:map(function(x,y,tid)
@@ -716,6 +888,18 @@ local function _processLasers()
       return 2 --Convert into wall
     elseif tid == 126 then
       WNOT(x*8,y*8)
+      return 2 --Convert into wall
+    elseif tid == 73 then
+      WFUSE(x*8,y*8)
+      return 2 --Convert into wall
+    elseif tid == 74 then
+      WREP(x*8,y*8)
+      return 2 --Convert into wall
+    elseif tid == 75 then
+      Delay(x*8,y*8,true)
+      return 2 --Convert into wall
+    elseif tid >= 128 then
+      WDIA(x*8,y*8,tid-127)
       return 2 --Convert into wall
     end
   end)
@@ -791,6 +975,10 @@ local function _processObjects()
       Door(x*8,y*8,false)
     elseif tid == 122 then --Door horizental
       Door(x*8,y*8,true)
+    elseif tid == 127 then --Touch trigger
+      TTrigger(x*8,y*8)
+    elseif tid == 120 then --Check point
+      WCP(x*8,y*8)
     end
   end)
 end
@@ -802,7 +990,7 @@ end
 
 local darkpal = {0,0,5,1,2,1,13,6,2,4,9,3,13,5,0,0}
 --Chat pop up
-local function showDialog(id)
+showDialog = function(id)
   local backup = screenshot()
   local scr = screenshot()
   scr:map(function(x,y,c)
@@ -885,13 +1073,21 @@ local function showDialog(id)
         cchar = #message
       end
       
+      if btnp(7) then break end
+      
       __BTNUpdate(a)
     end
+  end
+  
+  if id == 6 then
+    openURL("https://ldjam.com/events/ludum-dare/42/lasersbot")
+    shutdown()
   end
   
   clear(0)
   backup:image():draw()
   setPalette()
+  clearEStack()
 end
 
 --The VRAM effects
@@ -899,8 +1095,9 @@ local badPixelsImageData = imagedata(sw,sh)
 badPixelsImageData:map(function() return 15 end)
 local badPixelsImage = badPixelsImageData:image()
 local totalBadPixels = 0
+local screenPixels = 192*128*0.6
 --local badAddresses = {}
-local randomizeTime = 1
+local randomizeTime = 0.25
 local randomizeTimer = randomizeTime
 
 local function newBadAddress()
@@ -915,6 +1112,8 @@ local function newBadAddress()
   
   if badPixelsImageData:getPixel(x,y) == 15 then
     totalBadPixels = totalBadPixels + 2
+  else
+    return newBadAddress()
   end
   
   --Set the pixels
@@ -929,6 +1128,16 @@ local function pokeBadAddress()
   palt(0,false) palt(15,true)
   badPixelsImage:draw()
   palt()
+end
+
+local RAM = 6*1024
+
+resetRAM = function()
+  badPixelsImageData:map(function() return 15 end)
+  badPixelsImage:refresh()
+  totalBadPixels = 0
+  RAM = 6*1024
+  showDialog(-1)
 end
 
 --Events
@@ -953,16 +1162,35 @@ function _update(dt)
   
   applyTriggers()
   
-  --Randomize bad pixels
-  --[[randomizeTimer = randomizeTimer - dt
-  if randomizeTimer <= 0 or true then
-    randomizeTimer = randomizeTime
-    for i=1,10 do newBadAddress() end
-  end]]
+  if RAM > 0 then
+    RAM = RAM - 400*dt
+  else
+    --Randomize bad pixels
+    randomizeTimer = randomizeTimer - dt
+    if randomizeTimer <= 0 then
+      randomizeTimer = randomizeTime
+      for i=1,25 do newBadAddress() end
+    end
+    
+    if totalBadPixels >= screenPixels then
+      --[[resetRAM()
+      MainPlayer:move(CHECKPOINT_X,CHECKPOINT_Y)
+      MainPlayer.rot = 0]]
+      
+      showDialog(0)
+      reboot()
+    end
+  end
 end
+
+local k6 = 6*1024
+local k12 = 12*1024
 
 function _draw()
   clear(14)
+  
+  pushMatrix()
+  cam("translate",math.floor(sw/2-MainPlayer.x-MainPlayer.w/2),math.floor(sh/2-MainPlayer.y-MainPlayer.h/2))
   
   --Draw background
   bgBatch:draw()
@@ -970,14 +1198,22 @@ function _draw()
   --Draw objects
   for layer=4,1,-1 do
     drawLayer = layer
-    local items, len = world:queryRect(0,0,sw,sh,layerDrawFilter)
+    local items, len = world:queryRect(0,0,mw*8+8,mh*8+8,layerDrawFilter)
     for i=1,len do
       items[i]:draw()
     end
   end
   
+  popMatrix()
+  
   --VRAM effects
   pokeBadAddress()
   
-  if btnp(7) then showDialog(1) end
+  --RAM bar
+  
+  rect(0,0,sw,4,false,0)
+  rect(-1,-1,sw+2,6,true,6)
+  rect(0,0,sw/2,3,false,5)
+  rect(sw/2+1,0,sw/2,3,false,13)
+  rect(0,0,((k6-RAM)/k12 + (totalBadPixels/screenPixels)/2)*sw,4,false,8)
 end
